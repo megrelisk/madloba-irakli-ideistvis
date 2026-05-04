@@ -44,7 +44,12 @@ TYPES = ["architect", "general_contractor", "real_estate_agency"]
 SEARCH_QUERIES = [
     "architecture firms Tbilisi", "construction companies Tbilisi", "interior design Tbilisi",
     "სამშენებლო კომპანია თბილისი", "არქიტექტურული სტუდია", "რემონტი თბილისი",
-    "building renovation Tbilisi", "engineering company Tbilisi"
+    "building renovation Tbilisi", "engineering company Tbilisi",
+    "Metrix Tbilisi", "Renox Tbilisi", "Anagi construction", "Archi construction",
+    "m2 development Tbilisi", "Simetria construction", "Domus architecture",
+    "სამშენებლო კომპანიები", "არქიტექტურული ბიურო", "ბინების რემონტი",
+    "interior design studio Tbilisi", "landscape architecture Tbilisi",
+    "real estate development Tbilisi", "structural engineering Tbilisi"
 ]
 
 HEADERS = {
@@ -158,7 +163,8 @@ def save_to_excel(data):
             "Website": item["website"],
             "Google Maps Link": item["google_maps_url"],
             "Rating": item["rating"],
-            "User Ratings": item["user_ratings_total"]
+            "Votes (Number of Ratings)": item["user_ratings_total"],
+            "Business Status": item["business_status"]
         })
         
     df = pd.DataFrame(export_data)
@@ -208,6 +214,21 @@ TEMPLATE = r"""
         button { padding: 0.6rem 1rem; border-radius: 8px; border: none; background: #334155; color: white; font-weight: 600; cursor: pointer; font-size: 0.8rem; }
         select, input { width: 100%; padding: 0.5rem; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 0.85rem; margin-bottom: 0.5rem; }
         #stats-bar { padding: 0.5rem 1rem; background: #e2e8f0; font-size: 0.8rem; font-weight: 600; color: #1e293b; }
+
+        /* Premium Popup Styles */
+        .leaflet-popup-content-wrapper { padding: 0; overflow: hidden; border-radius: 12px; }
+        .leaflet-popup-content { margin: 0; width: 250px !important; }
+        .popup-card { display: flex; flex-direction: column; }
+        .popup-header { padding: 12px; color: white; }
+        .popup-header h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+        .popup-body { padding: 12px; font-size: 0.85rem; color: #334155; line-height: 1.4; }
+        .popup-body p { margin: 4px 0; }
+        .popup-footer { display: flex; gap: 8px; padding: 12px; background: #f8fafc; border-top: 1px solid #e2e8f0; }
+        .popup-btn { flex: 1; padding: 6px; border-radius: 6px; text-decoration: none; font-size: 0.75rem; font-weight: 600; text-align: center; transition: 0.2s; }
+        .popup-btn.maps { background: #334155; color: white; }
+        .popup-btn.web { background: #2563eb; color: white; }
+        .popup-btn.disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; }
+        .popup-btn:hover:not(.disabled) { opacity: 0.9; transform: translateY(-1px); }
     </style>
 </head>
 <body>
@@ -246,7 +267,12 @@ TEMPLATE = r"""
         const map = L.map('map').setView([41.6938, 44.8015], 13);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
         
-        const cluster = L.markerClusterGroup();
+        const cluster = L.markerClusterGroup({
+            spiderfyOnMaxZoom: true,
+            showCoverageOnHover: false,
+            zoomToBoundsOnClick: true,
+            maxClusterRadius: 40
+        });
         map.addLayer(cluster);
 
         let filteredData = [...data];
@@ -264,13 +290,24 @@ TEMPLATE = r"""
                 const marker = L.circleMarker([item.lat, item.lng], {
                     radius: 8, fillColor: color, color: '#fff', weight: 1, opacity: 1, fillOpacity: 0.9
                 });
+
+                const hasWeb = item.website && item.website !== 'N/A';
+                
                 marker.bindPopup(`
-                    <div style="min-width:180px">
-                        <h4 style="margin:0 0 5px 0">${item.name}</h4>
-                        <p style="font-size:0.8rem; margin:2px 0"><b>Category:</b> ${item.category}</p>
-                        <p style="font-size:0.8rem; margin:2px 0"><b>Phone:</b> ${item.phone}</p>
-                        <a href="${item.website}" target="_blank" style="font-size:0.8rem">Website</a> | 
-                        <a href="${item.google_maps_url}" target="_blank" style="font-size:0.8rem">Maps</a>
+                    <div class="popup-card">
+                        <div class="popup-header" style="background: ${color}">
+                            <h3>${item.name}</h3>
+                        </div>
+                        <div class="popup-body">
+                            <p><b>Category:</b> ${item.category}</p>
+                            <p><b>Address:</b> ${item.address}</p>
+                            <p><b>Phone:</b> ${item.phone}</p>
+                            ${item.rating ? `<p><b>Rating:</b> ⭐${item.rating} (${item.user_ratings_total})</p>` : ''}
+                        </div>
+                        <div class="popup-footer">
+                            <a href="${item.google_maps_url}" target="_blank" class="popup-btn maps">Maps</a>
+                            ${hasWeb ? `<a href="${item.website}" target="_blank" class="popup-btn web">Website</a>` : '<span class="popup-btn disabled">No Web</span>'}
+                        </div>
                     </div>
                 `);
                 cluster.addLayer(marker);
