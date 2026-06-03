@@ -1,0 +1,81 @@
+name: Build Android APK
+
+# Builds the Cola Quest debug APK in the cloud (this is where the Android SDK
+# lives) and publishes it both as a downloadable artifact and as a GitHub
+# Release asset so it can be installed straight onto a phone.
+
+on:
+  push:
+    branches: ["claude/mobile-game-stack-design-3obyF"]
+    paths:
+      - "game/**"
+      - ".github/workflows/build-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: game
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Copy Phaser + sync web assets into Android
+        run: |
+          npm run copy:phaser
+          npx cap sync android
+
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk cola-quest.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cola-quest-apk
+          path: game/cola-quest.apk
+          if-no-files-found: error
+
+      - name: Publish APK to a Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cola-quest-latest
+          name: Cola Quest (latest build)
+          prerelease: true
+          files: game/cola-quest.apk
+          body: |
+            📱 **Cola Quest — latest debug APK**
+
+            How to install on your Android phone:
+            1. Download `cola-quest.apk` below (tap it on your phone).
+            2. When prompted, allow installing from this source / "unknown sources".
+            3. Open **Cola Quest** and play!
+
+            > This is an unsigned *debug* build for personal play-testing.

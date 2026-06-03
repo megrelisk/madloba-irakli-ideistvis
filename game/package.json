@@ -1,0 +1,17 @@
+{
+  "name": "cola-quest",
+  "version": "1.0.0",
+  "description": "Cola Quest - a 3-level mobile arcade game (Coca-Cola adventure)",
+  "private": true,
+  "scripts": {
+    "copy:phaser": "node ./scripts/copy-phaser.js",
+    "sync": "npm run copy:phaser && cap sync android",
+    "build:apk": "npm run sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "phaser": "^3.80.1"
+  }
+}

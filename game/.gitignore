@@ -1,0 +1,7 @@
+# Node
+node_modules/
+
+# The repo-root .gitignore ignores "*.json"; re-include the config files the
+# game/CI actually needs (package.json, package-lock.json, capacitor.config.json, …).
+!*.json
+!**/*.json
