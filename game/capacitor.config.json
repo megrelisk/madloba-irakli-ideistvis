@@ -1,0 +1,11 @@
+{
+  "appId": "com.colaquest.game",
+  "appName": "Cola Quest",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
