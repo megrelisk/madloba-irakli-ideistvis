@@ -19,6 +19,7 @@ class FakeWin(types.ModuleType):
         super().__init__("winapi")
         self.layout = HKL[EN]
         self.held = set()
+        self.caps = False
         self.switched = []
 
     def foreground_window(self):
@@ -41,7 +42,7 @@ class FakeWin(types.ModuleType):
         return vk in self.held
 
     def caps_on(self):
-        return False
+        return self.caps
 
 
 @pytest.fixture
@@ -54,7 +55,9 @@ def env(monkeypatch, detector):
     fixer.refresh_layouts()
     fixer.detector = detector
     done = []
-    fixer.replace = lambda erase, text, hkl, vk: done.append((erase, text, hkl, vk))
+    def replace(erase, text, hkl, vk, toggle_caps=False):
+        done.append((erase, text, hkl, vk) + (("caps",) if toggle_caps else ()))
+    fixer.replace = replace
     monkeypatch.setattr(app, "add_exception", lambda word: None)
     return fake, fixer, done
 
@@ -134,3 +137,65 @@ def test_ctrl_shortcut_resets_word(env):
     type_text(fake, fixer, KA, "ჯობა ")
     run_actions(fixer)
     assert done == []
+
+
+def type_with_caps(fake, fixer, lang, text):
+    """Type `text` as it would come out with Caps Lock on: Shift gives small letters."""
+    fake.caps = True
+    swallowed = []
+    for ch in text:
+        if ch == " ":
+            swallowed.append(fixer.on_key(fake.VK_SPACE))
+            continue
+        vk, shift = REVERSE[lang][ch.lower()]
+        if ch.isalpha() and ch.islower():
+            fake.held.add(fake.VK_SHIFT)
+        swallowed.append(fixer.on_key(vk))
+        fake.held.discard(fake.VK_SHIFT)
+    return swallowed
+
+
+def test_accidental_caps_lock_is_fixed_and_switched_off(env):
+    fake, fixer, done = env
+    swallowed = type_with_caps(fake, fixer, EN, "hELLO ")
+    run_actions(fixer)
+    assert swallowed[-1] is True
+    assert done == [(5, "Hello", HKL[EN], fake.VK_SPACE, "caps")]
+
+
+def test_accidental_caps_in_russian(env):
+    fake, fixer, done = env
+    fake.layout = HKL[RU]
+    type_with_caps(fake, fixer, RU, "пРИВЕТ ")
+    run_actions(fixer)
+    assert done == [(6, "Привет", HKL[RU], fake.VK_SPACE, "caps")]
+
+
+def test_accidental_caps_and_wrong_layout_together(env):
+    fake, fixer, done = env
+    # "Привет" meant, English layout active, Caps Lock on: screen shows "gHBDTN".
+    fake.caps = True
+    fake.held.add(fake.VK_SHIFT)
+    fixer.on_key(REVERSE[RU]["п"][0])
+    fake.held.clear()
+    for ch in "ривет":
+        fixer.on_key(REVERSE[RU][ch][0])
+    fixer.on_key(fake.VK_SPACE)
+    run_actions(fixer)
+    assert done == [(6, "Привет", HKL[RU], fake.VK_SPACE, "caps")]
+
+
+def test_intended_capitals_are_left_alone(env):
+    fake, fixer, done = env
+    type_with_caps(fake, fixer, EN, "NASA ")
+    run_actions(fixer)
+    assert done == []
+
+
+def test_undo_caps_fix_turns_caps_back_on(env):
+    fake, fixer, done = env
+    type_with_caps(fake, fixer, EN, "hELLO ")
+    fixer.on_key(fake.VK_PAUSE)
+    run_actions(fixer)
+    assert done[-1] == (6, "hELLO", HKL[EN], fake.VK_SPACE, "caps")
+    assert "hello" not in fixer.detector.exceptions

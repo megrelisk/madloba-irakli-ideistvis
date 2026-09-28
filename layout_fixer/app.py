@@ -19,7 +19,8 @@ import threading
 from ctypes import wintypes
 
 import winapi as w
-from engine import BUILTIN_TABLES, PRIMARY_LANGID, Detector, Layout
+from engine import (BUILTIN_TABLES, PRIMARY_LANGID, Correction, Detector, Layout,
+                    fix_accidental_caps)
 
 APP_NAME = "LayoutFixer"
 APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
@@ -101,6 +102,7 @@ def set_autostart(enabled):
 class Fixer:
     def __init__(self):
         self.enabled = True
+        self.fix_caps = True
         self.detector = None
         self.layouts = {}       # hkl -> Layout
         self.by_lang = {}       # lang -> Layout used when switching to it
@@ -195,22 +197,30 @@ class Fixer:
         if not keys or lay is None:
             self.last_word = None
             return False
+        caps_keys = fix_accidental_caps(keys, lay) if self.enabled and self.fix_caps else None
+        corr = None
         if self.enabled and self.detector is not None:
             try:
-                corr = self.detector.decide(keys, lay, list(self.by_lang.values()),
+                corr = self.detector.decide(caps_keys or keys, lay,
+                                            list(self.by_lang.values()),
                                             prefer=self.prev_lang)
             except Exception:
                 log.exception("detector failed")
-                corr = None
+        if caps_keys:
+            old = lay.type_keys(keys)
             if corr:
-                target = self.by_lang[corr.target_lang]
-                self.prev_lang = corr.target_lang
-                self.last_fix = (corr, keys, vk)
-                self.last_word = None
-                self.actions.put(lambda: self.replace(len(corr.old_text), corr.new_text,
-                                                      target.hkl, vk))
-                log.info("fixed %r -> %r", corr.old_text, corr.new_text)
-                return True
+                corr = Correction(lay.lang, corr.target_lang, old, corr.new_text, caps=True)
+            else:
+                corr = Correction(lay.lang, lay.lang, old, lay.type_keys(caps_keys), caps=True)
+        if corr:
+            target = self.by_lang[corr.target_lang]
+            self.prev_lang = corr.target_lang
+            self.last_fix = (corr, keys, vk)
+            self.last_word = None
+            self.actions.put(lambda: self.replace(len(corr.old_text), corr.new_text,
+                                                  target.hkl, vk, toggle_caps=corr.caps))
+            log.info("fixed %r -> %r", corr.old_text, corr.new_text)
+            return True
         self.prev_lang = lay.lang
         self.last_word = (keys, lay, vk)
         return False
@@ -231,7 +241,11 @@ class Fixer:
             retype = vk if vk != w.VK_RETURN else None
             self.prev_lang = corr.source_lang
             self.last_word = None
-            self.actions.put(lambda: self.replace(erase, corr.old_text, source.hkl, retype))
+            self.actions.put(lambda: self.replace(erase, corr.old_text, source.hkl, retype,
+                                                  toggle_caps=corr.caps))
+            if corr.caps and corr.source_lang == corr.target_lang:
+                log.info("undo caps fix of %r", corr.old_text)
+                return      # only the case changed: nothing to learn
             word = corr.old_text.strip()
             if self.detector:
                 self.detector.exceptions.add(word.lower())
@@ -267,9 +281,10 @@ class Fixer:
 
     # --- worker (runs outside the hook)
 
-    def replace(self, erase, text, hkl, boundary_vk):
+    def replace(self, erase, text, hkl, boundary_vk, toggle_caps=False):
         w.switch_layout(hkl)
-        inputs = w.vk_press(w.VK_BACK, erase) + w.unicode_text(text)
+        inputs = w.vk_press(w.VK_CAPITAL) if toggle_caps else []
+        inputs += w.vk_press(w.VK_BACK, erase) + w.unicode_text(text)
         if boundary_vk:
             inputs += w.vk_press(boundary_vk)
         w.send_inputs(inputs)
@@ -351,6 +366,11 @@ def run_tray(fixer, settings):
         settings["enabled"] = fixer.enabled
         save_settings(settings)
 
+    def toggle_caps(icon, item):
+        fixer.fix_caps = not fixer.fix_caps
+        settings["fix_caps"] = fixer.fix_caps
+        save_settings(settings)
+
     def toggle_autostart(icon, item):
         set_autostart(not autostart_enabled())
 
@@ -372,6 +392,8 @@ def run_tray(fixer, settings):
     menu = pystray.Menu(
         pystray.MenuItem("Автоисправление раскладки", toggle_enabled,
                          checked=lambda item: fixer.enabled, default=True),
+        pystray.MenuItem("Исправлять случайный Caps Lock (hELLO -> Hello)", toggle_caps,
+                         checked=lambda item: fixer.fix_caps),
         pystray.MenuItem("Запускать вместе с Windows", toggle_autostart,
                          checked=lambda item: autostart_enabled()),
         pystray.Menu.SEPARATOR,
@@ -405,6 +427,7 @@ def main():
 
     fixer = Fixer()
     fixer.enabled = settings.get("enabled", True)
+    fixer.fix_caps = settings.get("fix_caps", True)
     threading.Thread(target=fixer.worker, daemon=True).start()
     threading.Thread(target=fixer.hook_loop, daemon=True).start()
 

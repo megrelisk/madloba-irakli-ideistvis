@@ -106,6 +106,27 @@ class Correction:
     target_lang: str
     old_text: str   # what is on screen now
     new_text: str   # what should be there
+    caps: bool = False  # Caps Lock was on by accident and gets switched off
+
+
+def fix_accidental_caps(keys, layout):
+    """Keys of "hELLO" typed with Caps Lock on, as if it were off: "Hello".
+
+    The telltale sign is Shift on the first letter only: with Caps Lock on
+    that gives a small first letter and capitals after it, which nobody types
+    on purpose. Returns None if the word does not look like that.
+    """
+    if layout.lang not in (EN, RU) or len(keys) < 2:
+        return None
+    if not all(caps for _, _, caps in keys):
+        return None
+    letters = [(vk, shift) for vk, shift, _ in keys
+               if (layout.table.get((vk, False)) or "").isalpha()]
+    if len(letters) < 2 or letters[0] != (keys[0][0], True):
+        return None
+    if any(shift for _, shift in letters[1:]):
+        return None
+    return [(vk, shift, False) for vk, shift, _ in keys]
 
 
 def _split_core(text):

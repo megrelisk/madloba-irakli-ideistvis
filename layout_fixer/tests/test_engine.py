@@ -1,6 +1,6 @@
 import pytest
 
-from engine import BUILTIN_TABLES, EN, KA, RU, Layout
+from engine import BUILTIN_TABLES, EN, KA, RU, Layout, fix_accidental_caps
 
 LAYOUTS = {lang: Layout(lang, table) for lang, table in BUILTIN_TABLES.items()}
 REVERSE = {lang: {ch: key for key, ch in reversed(list(t.items()))}
@@ -78,3 +78,40 @@ def test_caps_lock(detector):
     keys = [(vk, shift, True) for vk, shift, _ in keys_for(RU, "привет")]
     corr = detector.decide(keys, LAYOUTS[EN], list(LAYOUTS.values()))
     assert corr.new_text == "ПРИВЕТ"
+
+
+def caps_keys(lang, text):
+    """Keys for `text` typed with Caps Lock on (Shift makes letters small)."""
+    out = []
+    for c in text:
+        if c.isalpha():
+            out.append((REVERSE[lang][c.lower()][0], c.islower(), True))
+        else:
+            out.append(REVERSE[lang][c] + (True,))
+    return out
+
+
+@pytest.mark.parametrize("typed,lang,expected", [
+    ("hELLO", EN, "Hello"),
+    ("пРИВЕТ", RU, "Привет"),
+    ("hELLO!", EN, "Hello!"),
+])
+def test_accidental_caps(typed, lang, expected):
+    fixed = fix_accidental_caps(caps_keys(lang, typed), LAYOUTS[lang])
+    assert LAYOUTS[lang].type_keys(fixed) == expected
+
+
+@pytest.mark.parametrize("typed,lang", [
+    ("HELLO", EN),      # all capitals: may be on purpose
+    ("hElLO", EN),      # Shift inside the word
+    ("h", EN),
+    ("გამარჯობა", KA),  # Georgian has no case
+])
+def test_caps_left_alone(typed, lang):
+    keys = caps_keys(lang, typed) if lang != KA else [
+        (vk, False, True) for vk, _, _ in keys_for(KA, typed)]
+    assert fix_accidental_caps(keys, LAYOUTS[lang]) is None
+
+
+def test_caps_off_is_not_touched():
+    assert fix_accidental_caps(keys_for(EN, "Hello"), LAYOUTS[EN]) is None
