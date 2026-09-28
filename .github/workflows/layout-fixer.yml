@@ -1,0 +1,60 @@
+name: LayoutFixer
+
+on:
+  push:
+    paths:
+      - "layout_fixer/**"
+      - ".github/workflows/layout-fixer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: layout_fixer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt spylls pytest pyinstaller
+
+      - name: Build dictionaries
+        run: python build_dicts.py
+
+      - name: Unit tests
+        run: python -m pytest -q tests
+
+      - name: Windows smoke test
+        run: python tools/windows_smoke_test.py
+
+      - name: Detection quality
+        run: python tools/evaluate.py 3000
+
+      - name: Build LayoutFixer.exe
+        run: >
+          pyinstaller --noconfirm --onefile --noconsole --name LayoutFixer
+          --add-data "dicts;dicts" --hidden-import pystray._win32 app.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LayoutFixer
+          path: layout_fixer/dist/LayoutFixer.exe
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release delete layout-fixer --yes --cleanup-tag || true
+          gh release create layout-fixer dist/LayoutFixer.exe \
+            --title "LayoutFixer" --target "$GITHUB_SHA" \
+            --notes "Автоисправление раскладки EN / RU / KA для Windows. Скачайте LayoutFixer.exe и запустите."
