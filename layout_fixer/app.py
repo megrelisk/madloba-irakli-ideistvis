@@ -19,6 +19,7 @@ import threading
 from ctypes import wintypes
 
 import winapi as w
+from stats import Stats
 from engine import (BUILTIN_TABLES, PRIMARY_LANGID, Correction, Detector, Layout,
                     fix_accidental_caps)
 
@@ -26,6 +27,7 @@ APP_NAME = "LayoutFixer"
 APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 EXCEPTIONS_FILE = os.path.join(APP_DIR, "exceptions.txt")
+STATS_FILE = os.path.join(APP_DIR, "stats.json")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 BOUNDARY_KEYS = (w.VK_SPACE, w.VK_RETURN, w.VK_TAB)
@@ -110,7 +112,8 @@ class Fixer:
         self.hwnd = None
         self.prev_lang = None
         self.last_word = None   # (keys, Layout, boundary_vk) of the finished word
-        self.last_fix = None    # (Correction, keys, boundary_vk) that can be undone
+        self.last_fix = None    # (Correction, keys, boundary_vk, kind, seconds) to undo
+        self.stats = Stats()
         self.actions = queue.Queue()
         self._hooks = []
         self._procs = []
@@ -150,6 +153,7 @@ class Fixer:
     # --- hooks (run on the hook thread, must be fast)
 
     def reset(self):
+        self.stats.on_pause()
         self.word = []
         self.last_word = None
         self.last_fix = None
@@ -178,12 +182,14 @@ class Fixer:
             return False
 
         if vk in BOUNDARY_KEYS:
+            self.stats.on_key()
             return self.on_boundary(vk)
 
         lay = self.layout_now()
         if lay is None or (vk, False) not in lay.table:
             self.reset()        # arrows, Home, Delete, F-keys... cursor moved
             return False
+        self.stats.on_key()
         self.word.append((vk, w.key_down(w.VK_SHIFT), w.caps_on()))
         if len(self.word) > 40:
             self.word = []
@@ -215,7 +221,11 @@ class Fixer:
         if corr:
             target = self.by_lang[corr.target_lang]
             self.prev_lang = corr.target_lang
-            self.last_fix = (corr, keys, vk)
+            kind = "layout" if corr.target_lang != corr.source_lang else "caps"
+            saved = self.stats.record(kind, corr.old_text, corr.new_text,
+                                      corr.source_lang, corr.target_lang)
+            self.actions.put(self.stats.save)
+            self.last_fix = (corr, keys, vk, kind, saved)
             self.last_word = None
             self.actions.put(lambda: self.replace(len(corr.old_text), corr.new_text,
                                                   target.hkl, vk, toggle_caps=corr.caps))
@@ -232,8 +242,10 @@ class Fixer:
 
     def manual(self):
         if self.last_fix:
-            corr, keys, vk = self.last_fix
+            corr, keys, vk, kind, saved = self.last_fix
             self.last_fix = None
+            self.stats.undo(kind, corr.new_text, saved)
+            self.actions.put(self.stats.save)
             source = self.by_lang.get(corr.source_lang)
             if source is None:
                 return
@@ -271,6 +283,8 @@ class Fixer:
         if vk is None:
             self.word = keys
         self.prev_lang = target.lang
+        self.stats.record("manual", old, new, lay.lang, target.lang)
+        self.actions.put(self.stats.save)
         self.actions.put(lambda: self.replace(len(old) + extra, new, target.hkl, vk))
 
     def next_layout(self, lay):
@@ -335,6 +349,10 @@ class Fixer:
             w.user32.UnhookWindowsHookEx(hook)
 
     def stop(self):
+        try:
+            self.stats.save()
+        except OSError:
+            log.exception("could not save stats")
         self.actions.put(None)
         if self.hook_thread_id:
             w.user32.PostThreadMessageW(self.hook_thread_id, w.WM_QUIT, 0, 0)
@@ -358,8 +376,35 @@ def make_icon_image():
     return img
 
 
+def message_box(text, title, flags=0x40):
+    """MessageBoxW in its own thread so the tray menu stays responsive."""
+    result = []
+    t = threading.Thread(target=lambda: result.append(
+        ctypes.windll.user32.MessageBoxW(None, text, title, flags | 0x10000)))
+    t.start()
+    return t, result
+
+
 def run_tray(fixer, settings):
     import pystray
+
+    class TrayIcon(pystray.Icon):
+        def _on_notify(self, wparam, lparam):
+            if lparam == 0x0205:        # WM_RBUTTONUP: fresh numbers in the menu
+                self.update_menu()
+            super()._on_notify(wparam, lparam)
+
+    def show_stats(icon, item):
+        message_box(fixer.stats.summary(), "LayoutFixer - статистика")
+
+    def reset_stats(icon, item):
+        def ask():
+            t, answer = message_box("Обнулить всю статистику?", "LayoutFixer", 0x24)
+            t.join()
+            if answer and answer[0] == 6:   # IDYES
+                fixer.stats.reset()
+                fixer.stats.save()
+        threading.Thread(target=ask, daemon=True).start()
 
     def toggle_enabled(icon, item):
         fixer.enabled = not fixer.enabled
@@ -390,8 +435,12 @@ def run_tray(fixer, settings):
         icon.stop()
 
     menu = pystray.Menu(
+        pystray.MenuItem(lambda item: fixer.stats.short(), show_stats, enabled=False),
+        pystray.MenuItem("Статистика...", show_stats, default=True),
+        pystray.MenuItem("Обнулить статистику...", reset_stats),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Автоисправление раскладки", toggle_enabled,
-                         checked=lambda item: fixer.enabled, default=True),
+                         checked=lambda item: fixer.enabled),
         pystray.MenuItem("Исправлять случайный Caps Lock (hELLO -> Hello)", toggle_caps,
                          checked=lambda item: fixer.fix_caps),
         pystray.MenuItem("Запускать вместе с Windows", toggle_autostart,
@@ -402,7 +451,7 @@ def run_tray(fixer, settings):
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Выход", quit_app),
     )
-    icon = pystray.Icon(APP_NAME, make_icon_image(),
+    icon = TrayIcon(APP_NAME, make_icon_image(),
                         "LayoutFixer - EN / RU / KA\nPause/Break: отменить или исправить вручную",
                         menu)
     icon.run()
@@ -426,6 +475,7 @@ def main():
         save_settings(settings)
 
     fixer = Fixer()
+    fixer.stats = Stats(STATS_FILE)
     fixer.enabled = settings.get("enabled", True)
     fixer.fix_caps = settings.get("fix_caps", True)
     threading.Thread(target=fixer.worker, daemon=True).start()

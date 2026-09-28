@@ -199,3 +199,15 @@ def test_undo_caps_fix_turns_caps_back_on(env):
     run_actions(fixer)
     assert done[-1] == (6, "hELLO", HKL[EN], fake.VK_SPACE, "caps")
     assert "hello" not in fixer.detector.exceptions
+
+
+def test_stats_count_fixes_and_undo(env):
+    fake, fixer, done = env
+    type_text(fake, fixer, KA, "გამარჯობა ")
+    type_text(fake, fixer, EN, "ok ")
+    type_with_caps(fake, fixer, EN, "hELLO ")
+    t = fixer.stats.totals()
+    assert t["layout"] == 1 and t["caps"] == 1 and t["seconds"] > 0
+    fixer.on_key(fake.VK_PAUSE)          # undo the caps fix
+    t2 = fixer.stats.totals()
+    assert t2["caps"] == 0 and t2["undo"] == 1 and t2["seconds"] < t["seconds"]
