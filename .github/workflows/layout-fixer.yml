@@ -7,6 +7,9 @@ on:
       - ".github/workflows/layout-fixer.yml"
   workflow_dispatch:
 
+env:
+  PYTHONUTF8: "1"
+
 permissions:
   contents: write
 

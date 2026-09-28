@@ -63,7 +63,7 @@ RU_TABLE = _table_from_rows(
 )
 # Windows "Georgian (QWERTY)" layout.
 KA_TABLE = _table_from_rows(
-    "„1234567890-=ქწერტყუიოპ[]\\ასდფგჰჯკლ;'ზხცვბნმ,./",
+    "„1234567890-=ქწერტყუიოპ[]~ასდფგჰჯკლ;'ზხცვბნმ,./",
     "“!@#$%^&*()_+QჭEღთYUIOP{}|AშDFGHჟKL:\"ძXჩVBNM<>?",
 )
 BUILTIN_TABLES = {EN: US_TABLE, RU: RU_TABLE, KA: KA_TABLE}
